@@ -31,12 +31,9 @@ async function scrapeProductData() {
     return Array.from(document.querySelectorAll('a[href^="/pn/"]')).map((a) => {
       const href = a.getAttribute("href");
       return {
-        name:
-          a.querySelector('img[data-testid="product-card-image"]')?.alt || "N/A",
+        name: a.querySelector("img")?.alt || "N/A",
         link: "https://www.zeptonow.com" + href,
-        image:
-          a.querySelector('img[data-testid="product-card-image"]')?.src ||
-          "N/A",
+        image: a.querySelector("img")?.src || "N/A",
       };
     });
   });
@@ -56,15 +53,15 @@ async function scrapeProductData() {
 
       const productDetails = await productPage.evaluate(() => {
         const name =
-          document.querySelector("h1.text-sm.font-semibold")?.textContent.trim() ||
+          document.querySelector("h1.font-semibold")?.textContent.trim() ||
           "N/A";
 
         // Price & MRP
         const priceElement = Array.from(document.querySelectorAll("p")).find(
-          (p) => p.textContent.includes("₹") && !p.classList.contains("line-through")
+          (p) => p.textContent.includes("₹") && !p.textContent.includes("line-through")
         );
         const price = priceElement?.textContent.match(/₹\d+/)?.[0] || "N/A";
-        const mrpElement = document.querySelector("p.line-through");
+        const mrpElement = document.querySelector("span.line-through");
         const mrp = mrpElement?.textContent.replace("₹", "").trim() || "N/A";
 
         // Description
@@ -172,8 +169,8 @@ async function scrapeProductData() {
     worksheet.addRow(product);
   });
 
-  await workbook.xlsx.writeFile("products.xlsx");
-  console.log("Data saved to products.xlsx ✅");
+  await workbook.xlsx.writeFile("zepto_products.xlsx");
+  console.log("Data saved to zepto_products.xlsx ✅");
 
   await browser.close();
 }

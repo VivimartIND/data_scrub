@@ -66,7 +66,7 @@ and run command node amaze_meat.js
 3. paste the url in file bigbasket.js line number 4
 "code looks lime const baseUrl ="
 
-and run command node bigbasket.js
+and run command node big.js
 
 #amazon:
 **steps**
@@ -81,7 +81,35 @@ and run command node amaze.js
 **steps**
 1. open indiamart website
 2. search anything
-3. paste the url in file amaze.js line number 4
-"code looks lime const baseUrl ="
+3. paste the url in file mart.js line number 4
+"code looks lime const searchUrl ="
 
-and run command node amaze.js
+and run command node mart.js
+
+
+#google map:
+**steps**
+1. open google map
+2. search location with keyword supermarket
+3. paste the url in file map.js line number 4
+"code looks lime const searchUrl ="
+
+and run command node map.js
+
+#exporters india:
+**steps**
+1. open exporters india website
+2. select a category
+3. paste the url in file exporters.js line number 4
+"code looks lime const searchUrl ="
+
+and run command node exporters.js
+
+#traders india:
+**steps**
+1. open traders india website
+2. select a category
+3. paste the url in file trade.js line number 4
+"code looks lime const searchUrl ="
+
+and run command node trade.js
