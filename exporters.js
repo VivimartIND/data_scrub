@@ -1,9 +1,9 @@
 const puppeteer = require('puppeteer');
 const ExcelJS = require('exceljs');
 
-const searchUrl = 'https://www.tradeindia.com/seller/electronics-electrical-supplies/electrical-goods-equipment-supplies/';
+const searchUrl = 'https://www.exportersindia.com/indian-suppliers/tea.htm';
 
-async function saveToExcel(products, filename = 'tradeindia_electrical_products.xlsx', append = false) {
+async function saveToExcel(products, filename = 'exportersindia_tea_products.xlsx', append = false) {
   const workbook = new ExcelJS.Workbook();
   
   if (append) {
@@ -29,13 +29,7 @@ async function saveToExcel(products, filename = 'tradeindia_electrical_products.
       { header: 'Image', key: 'image', width: 50 },
       { header: 'Link', key: 'link', width: 60 },
       { header: 'Specifications', key: 'specifications', width: 50 },
-      { header: 'Company Details', key: 'companyDetails', width: 60 },
-      { header: 'Business Type', key: 'businessType', width: 30 },
-      { header: 'Employee Count', key: 'employeeCount', width: 15 },
-      { header: 'Establishment', key: 'establishment', width: 15 },
-      { header: 'Working Days', key: 'workingDays', width: 30 },
-      { header: 'Payment Mode', key: 'paymentMode', width: 30 },
-      { header: 'Address', key: 'address', width: 50 }
+      { header: 'Nature of Business', key: 'natureOfBusiness', width: 30 }
     ];
   }
 
@@ -52,13 +46,7 @@ async function saveToExcel(products, filename = 'tradeindia_electrical_products.
       image: product.image || 'N/A',
       link: product.link || 'N/A',
       specifications: product.specifications || 'N/A',
-      companyDetails: product.companyDetails || 'N/A',
-      businessType: product.businessType || 'N/A',
-      employeeCount: product.employeeCount || 'N/A',
-      establishment: product.establishment || 'N/A',
-      workingDays: product.workingDays || 'N/A',
-      paymentMode: product.paymentMode || 'N/A',
-      address: product.address || 'N/A'
+      natureOfBusiness: product.natureOfBusiness || 'N/A'
     });
   });
 
@@ -71,7 +59,7 @@ async function saveToExcel(products, filename = 'tradeindia_electrical_products.
   }
 }
 
-async function scrapeTradeIndia() {
+async function scrapeExportersIndia() {
   console.log('Launching browser...');
   const browser = await puppeteer.launch({
     headless: false, // Visible for debugging
@@ -94,10 +82,10 @@ async function scrapeTradeIndia() {
     console.log(`Scraping products (total collected: ${allProducts.length})...`);
 
     // Wait for product cards to load
-    await page.waitForSelector('div.sc-dd6e7c5f-0.fwANIQ', { timeout: 10000 }).catch(() => console.log('No cards found.'));
+    await page.waitForSelector('li div.l3Inn', { timeout: 10000 }).catch(() => console.log('No cards found.'));
 
     // Extract product cards
-    const productCards = await page.$$('div.sc-dd6e7c5f-0.fwANIQ');
+    const productCards = await page.$$('li div.l3Inn');
     console.log(`Found ${productCards.length} product cards.`);
 
     for (let i = 0; i < productCards.length; i++) {
@@ -116,50 +104,52 @@ async function scrapeTradeIndia() {
         image: 'N/A',
         link: 'N/A',
         specifications: 'N/A',
-        companyDetails: 'N/A',
-        businessType: 'N/A',
-        employeeCount: 'N/A',
-        establishment: 'N/A',
-        workingDays: 'N/A',
-        paymentMode: 'N/A',
-        address: 'N/A'
+        natureOfBusiness: 'N/A'
       };
 
       try {
         // Extract data from the card
         product = await page.evaluate(card => {
-          const nameElem = card.querySelector('h2.sc-c6d82cff-0.cafqiL a.title-url');
-          const priceElem = card.querySelector('button.get-best-quote span.sc-c6d82cff-0.loTaeE');
-          const supplierElem = card.querySelector('h3.sc-c6d82cff-0.kpvrsX a.company-url');
-          const locationElem = card.querySelector('h3.sc-c6d82cff-0.hIxlLz');
-          const gstElem = card.querySelector('p.sc-c6d82cff-0.kMMzMM span.sc-c6d82cff-0.jIpkKn');
-          const verifiedElem = card.querySelector('span.trusted-text strong');
-          const memberElem = card.querySelector('p.sc-c6d82cff-0.eZxubu');
-          const imageElem = card.querySelector('div.product-image img');
-          const linkElem = card.querySelector('h2.sc-c6d82cff-0.cafqiL a.title-url');
+          const nameElem = card.querySelector('h3 a.prdclk');
+          const priceElem = card.querySelector('div._price');
+          const supplierElem = card.querySelector('div._company a.com_nam');
+          const locationElem = card.querySelector('div._address span.title_tooltip');
+          const verifiedElem = card.querySelector('ul._mebData li a[title="V-Trust Member"] span');
+          const memberElem = card.querySelector('div.ms-yrs span');
+          const imageElem = card.querySelector('div.classImg img');
+          const linkElem = card.querySelector('h3 a.prdclk');
+          const specList = card.querySelector('ul._attriButes');
+          const specs = {};
+          if (specList) {
+            specList.querySelectorAll('li').forEach(li => {
+              const key = li.querySelector('span.eipdt-lbl')?.textContent.trim();
+              const value = li.querySelector('span.eipdt-val')?.textContent.trim();
+              if (key && value) specs[key] = value;
+            });
+          }
 
           return {
             name: nameElem ? nameElem.textContent.trim() : 'N/A',
-            price: priceElem ? priceElem.textContent.trim() : 'N/A',
+            price: priceElem ? priceElem.textContent.trim().replace(/\s+/g, ' ') : 'N/A',
             supplierName: supplierElem ? supplierElem.textContent.trim() : 'N/A',
-            location: locationElem ? locationElem.textContent.trim() : 'N/A',
-            gst: gstElem ? gstElem.textContent.trim() : 'N/A',
+            location: locationElem ? locationElem.getAttribute('data-tooltip') : 'N/A',
             verified: verifiedElem ? verifiedElem.textContent.trim() : 'N/A',
             memberSince: memberElem ? memberElem.textContent.trim() : 'N/A',
             image: imageElem ? imageElem.src : 'N/A',
-            link: linkElem ? linkElem.href : 'N/A'
+            link: linkElem ? linkElem.href : 'N/A',
+            specifications: Object.keys(specs).length > 0 ? JSON.stringify(specs) : 'N/A'
           };
         }, card);
 
-        // Click "VIEW NUMBER" to reveal phone
+        // Click "View Mobile" to reveal phone
         try {
-          const viewNumberButton = await card.$('button.view-number');
-          if (viewNumberButton) {
-            await viewNumberButton.click();
+          const viewMobileButton = await card.$('a._view_mobile');
+          if (viewMobileButton) {
+            await viewMobileButton.click();
             await new Promise(resolve => setTimeout(resolve, 1000)); // Wait for number to appear
             product.phone = await page.evaluate(card => {
-              const phoneButton = card.querySelector('button.view-number');
-              return phoneButton ? phoneButton.textContent.trim() : 'N/A';
+              const phoneButton = card.querySelector('a._view_mobile');
+              return phoneButton ? phoneButton.textContent.trim().replace('View Mobile', '').trim() : 'N/A';
             }, card);
           }
         } catch (error) {
@@ -172,49 +162,20 @@ async function scrapeTradeIndia() {
           try {
             await retryGoto(detailPage, product.link);
 
-            // Extract product specifications
-            product.specifications = await detailPage.evaluate(() => {
-              const specTable = document.querySelector('table.spec-table');
-              if (!specTable) return 'N/A';
-              const rows = specTable.querySelectorAll('tr');
-              const specs = {};
-              rows.forEach(row => {
-                const key = row.cells[0]?.textContent.trim();
-                const value = row.cells[1]?.textContent.trim();
-                if (key && value) specs[key] = value;
-              });
-              return JSON.stringify(specs);
-            });
-
-            // Extract company details
-            product.companyDetails = await detailPage.evaluate(() => {
-              const detailsDiv = document.querySelector('div.sc-c6d82cff-0.hEKoFN');
-              return detailsDiv ? detailsDiv.textContent.trim() : 'N/A';
-            });
-
-            // Extract business details
-            const businessDetails = await detailPage.evaluate(() => {
+            // Extract GST and Nature of Business
+            const details = await detailPage.evaluate(() => {
               const details = {};
-              const blocks = document.querySelectorAll('div.business-details div.info-block');
-              blocks.forEach(block => {
-                const title = block.querySelector('p.sc-c6d82cff-0.ZxFId')?.textContent.trim();
-                const value = block.querySelector('p.sc-c6d82cff-0.fioeCJ')?.textContent.trim();
-                if (title && value) details[title] = value;
+              const listItems = document.querySelectorAll('ul.pdsd-od-list li');
+              listItems.forEach(item => {
+                const key = item.querySelector('img')?.nextSibling?.textContent.trim();
+                const value = item.querySelector('span')?.textContent.trim();
+                if (key && value) details[key] = value;
               });
               return details;
             });
 
-            product.businessType = businessDetails['Business Type'] || 'N/A';
-            product.employeeCount = businessDetails['Employee Count'] || 'N/A';
-            product.establishment = businessDetails['Establishment'] || 'N/A';
-            product.workingDays = businessDetails['Working Days'] || 'N/A';
-            product.paymentMode = businessDetails['Payment Mode'] || 'N/A';
-
-            // Extract address from seller details
-            product.address = await detailPage.evaluate(() => {
-              const addressElem = document.querySelector('p.sc-c6d82cff-0.jIpkIW.title');
-              return addressElem ? addressElem.textContent.trim() : 'N/A';
-            });
+            product.gst = details['GST No.'] || 'N/A';
+            product.natureOfBusiness = details['Nature of Business'] || 'N/A';
 
             await detailPage.close();
           } catch (error) {
@@ -277,7 +238,7 @@ async function retryGoto(page, url, retries = 3) {
   }
 }
 
-scrapeTradeIndia().catch(error => {
+scrapeExportersIndia().catch(error => {
   console.error('Error in scraping:', error);
   process.exit(1);
 });

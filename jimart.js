@@ -1,9 +1,12 @@
 const puppeteer = require("puppeteer");
 const ExcelJS = require("exceljs");
 
-const url = "https://blinkit.com/cn/powdered-spices/cid/1557/50";
+const url = "https://www.jiomart.com/c/groceries/biscuits-drinks-packaged-foods/chips-namkeens/29000?prod_mart_master_vertical_products_popularity%5Bpage%5D=3";
 
-async function saveToExcel(products, filename = "blinkit_products.xlsx", append = false) {
+// Custom delay function
+const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+async function saveToExcel(products, filename = "jiomart_products.xlsx", append = false) {
   const workbook = new ExcelJS.Workbook();
   
   if (append) {
@@ -17,7 +20,6 @@ async function saveToExcel(products, filename = "blinkit_products.xlsx", append 
   const worksheet = workbook.getWorksheet("Products") || workbook.addWorksheet("Products");
 
   if (!append) {
-    // Define columns based on all possible keys
     const allKeys = new Set();
     products.forEach((product) => {
       Object.keys(product).forEach((key) => allKeys.add(key));
@@ -25,14 +27,15 @@ async function saveToExcel(products, filename = "blinkit_products.xlsx", append 
 
     const baseColumns = [
       { header: "Name", key: "name", width: 40 },
-      { header: "Pack", key: "pack", width: 20 },
-      { header: "Link", key: "link", width: 60 },
-      { header: "Image", key: "image", width: 50 },
+      { header: "Brand", key: "brand", width: 20 },
       { header: "Price", key: "price", width: 15 },
       { header: "MRP", key: "mrp", width: 15 },
       { header: "Offer", key: "offer", width: 15 },
+      { header: "Seller", key: "seller", width: 30 },
       { header: "Description", key: "description", width: 60 },
       { header: "Images", key: "images", width: 60 },
+      { header: "Link", key: "link", width: 60 },
+      { header: "Image", key: "image", width: 50 },
     ];
 
     const infoColumns = Array.from(allKeys)
@@ -55,15 +58,17 @@ async function saveToExcel(products, filename = "blinkit_products.xlsx", append 
   }
 }
 
-async function scrapeProductData() {
+async function scrapeJioMart() {
   console.log("Launching browser...");
   const browser = await puppeteer.launch({
     headless: false,
     slowMo: 100,
     defaultViewport: { width: 1280, height: 800 },
+    args: ["--no-sandbox", "--disable-setuid-sandbox"],
   });
 
   const page = await browser.newPage();
+  await page.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36");
   console.log("Navigating to URL...");
   await retryGoto(page, url);
 
@@ -72,55 +77,76 @@ async function scrapeProductData() {
   let scrollAttempts = 0;
   const maxScrollAttempts = 50;
   while (scrollAttempts < maxScrollAttempts) {
-    await page.evaluate(() => window.scrollBy(0, document.body.scrollHeight));
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-    const newHeight = await page.evaluate(() => document.body.scrollHeight);
-    if (newHeight === previousHeight) break;
+    const newHeight = await page.evaluate(() => {
+      window.scrollBy(0, document.body.scrollHeight);
+      return document.body.scrollHeight;
+    });
+    await delay(2000);
+    if (newHeight === previousHeight) {
+      console.log("No more products to load.");
+      break;
+    }
     previousHeight = newHeight;
     scrollAttempts++;
+    console.log(`Scroll attempt ${scrollAttempts}, page height: ${newHeight}`);
   }
 
-  console.log("Extracting product details from listing page...");
-  const cardSelector = 'div.tw-w-full.tw-px-3[data-pf="reset"]';
+  console.log("Extracting product cards...");
+  const cardSelector = "li.ais-InfiniteHits-item";
+  await page.waitForSelector(cardSelector, { timeout: 15000 }).catch(() => console.log("No cards found or timeout."));
   const cardHandles = await page.$$(cardSelector);
+  console.log(`Found ${cardHandles.length} product cards.`);
+
   const products = [];
   for (let i = 0; i < cardHandles.length; i++) {
-    const name = await page.evaluate((sel, idx) => {
+    const product = await page.evaluate((sel, idx) => {
       const cards = document.querySelectorAll(sel);
-      if (idx >= cards.length) return "N/A";
-      const nameEl = cards[idx].querySelector("div.tw-text-300.tw-font-semibold.tw-line-clamp-2");
-      return nameEl ? nameEl.textContent.trim() : "N/A";
+      if (idx >= cards.length) return null;
+
+      const card = cards[idx];
+      const nameEl = card.querySelector("div.plp-card-details-name");
+      const priceEl = card.querySelector("span.jm-heading-xxs");
+      const mrpEl = card.querySelector("span.jm-body-xxs.jm-fc-primary-grey-60.line-through");
+      const offerEl = card.querySelector("span.jm-badge");
+      const imageEl = card.querySelector("img.lazyautosizes");
+      const linkEl = card.querySelector("a.plp-card-wrapper");
+
+      console.log(`Card ${idx + 1} - Name: ${nameEl ? nameEl.textContent.trim() : "Not found"}`);
+      console.log(`Card ${idx + 1} - Price: ${priceEl ? priceEl.textContent.trim() : "Not found"}`);
+      console.log(`Card ${idx + 1} - MRP: ${mrpEl ? mrpEl.textContent.trim() : "Not found"}`);
+      console.log(`Card ${idx + 1} - Offer: ${offerEl ? offerEl.textContent.trim() : "Not found"}`);
+      console.log(`Card ${idx + 1} - Image: ${imageEl ? imageEl.src : "Not found"}`);
+      console.log(`Card ${idx + 1} - Link: ${linkEl ? linkEl.href : "Not found"}`);
+
+      return {
+        name: nameEl ? nameEl.textContent.trim() : "N/A",
+        price: priceEl ? priceEl.textContent.trim() : "N/A",
+        mrp: mrpEl ? mrpEl.textContent.trim() : "N/A",
+        offer: offerEl ? offerEl.textContent.trim() : "N/A",
+        image: imageEl ? imageEl.src : "N/A",
+        link: linkEl ? linkEl.href : "N/A",
+        brand: "N/A",
+        seller: "N/A",
+        description: "N/A",
+        images: "N/A",
+      };
     }, cardSelector, i);
 
-    const pack = await page.evaluate((sel, idx) => {
-      const cards = document.querySelectorAll(sel);
-      if (idx >= cards.length) return "N/A";
-      const packEl = cards[idx].querySelector("div.tw-text-200.tw-font-medium.tw-line-clamp-1");
-      return packEl ? packEl.textContent.trim() : "N/A";
-    }, cardSelector, i);
-
-    const price = await page.evaluate((sel, idx) => {
-      const cards = document.querySelectorAll(sel);
-      if (idx >= cards.length) return "N/A";
-      const priceEl = cards[idx].querySelector("div.tw-text-200.tw-font-semibold");
-      return priceEl ? priceEl.textContent.trim() : "N/A";
-    }, cardSelector, i);
-
-    products.push({ name, pack, price, image: "N/A", link: "", description: "N/A", images: "N/A", mrp: "N/A", offer: "N/A" });
+    if (product) products.push(product);
   }
 
-  console.log(`Found ${products.length} products. Now fetching details for each product...`);
+  console.log(`Found ${products.length} products. Fetching details...`);
 
   const allProductDetails = [];
   let isFirstSave = true;
 
-  // Handle Ctrl+C to save data and exit
+  // Handle Ctrl+C
   process.on("SIGINT", async () => {
     console.log("\nCaught interrupt signal. Saving collected data...");
     try {
       if (allProductDetails.length > 0) {
-        await saveToExcel(allProductDetails, "blinkit_products.xlsx", !isFirstSave);
-        console.log(`Saved ${allProductDetails.length} products to blinkit_products.xlsx`);
+        await saveToExcel(allProductDetails, "jiomart_products.xlsx", !isFirstSave);
+        console.log(`Saved ${allProductDetails.length} products to jiomart_products.xlsx`);
       } else {
         console.log("No products to save.");
       }
@@ -132,113 +158,105 @@ async function scrapeProductData() {
   });
 
   for (let i = 0; i < products.length; i++) {
+    if (products[i].link === "N/A") {
+      console.log(`Skipping product ${i + 1}: No valid link.`);
+      allProductDetails.push(products[i]);
+      continue;
+    }
+
     console.log(`Opening product page for: ${products[i].name}`);
     let retries = 3;
     let success = false;
+    let detailPage;
 
     while (retries > 0 && !success) {
       try {
-        // Click on the entire card using evaluate to avoid detached node issues
-        await page.evaluate((sel, idx) => {
-          const cards = document.querySelectorAll(sel);
-          if (idx >= cards.length) return;
-          cards[idx].click();
-        }, cardSelector, i);
+        detailPage = await browser.newPage();
+        await retryGoto(detailPage, products[i].link);
 
-        // Wait for PDP content to load
-        await page.waitForSelector("div.tw-text-600.tw-font-extrabold.tw-line-clamp-50", { timeout: 90000 });
+        // Wait for product name
+        await detailPage.waitForSelector("div#pdp_product_name", { timeout: 15000 }).catch(() => console.log(`Name element not found for ${products[i].link}`));
 
-        products[i].link = page.url();
-
-        // Expand "View more details" if present
-        await page.evaluate(() => {
-          const buttons = Array.from(document.querySelectorAll("button"));
-          const expandButton = buttons.find((b) => b.textContent.includes("View more details"));
-          if (expandButton) expandButton.click();
+        // Expand "More Details" for description and specifications
+        await detailPage.evaluate(() => {
+          const buttons = document.querySelectorAll("button.pdp-more-details");
+          buttons.forEach((button) => button.click());
         });
-        await new Promise((resolve) => setTimeout(resolve, 1500));
+        await delay(1500);
 
-        const productDetails = await page.evaluate(() => {
-          const name = document.querySelector("div.tw-text-600.tw-font-extrabold.tw-line-clamp-50")?.textContent.trim() || "N/A";
+        const productDetails = await detailPage.evaluate(() => {
+          const nameEl = document.querySelector("div#pdp_product_name");
+          const brandEl = document.querySelector("a#top_brand_name");
+          const priceEl = document.querySelector("div#price_section span.jm-heading-xs");
+          const mrpEl = document.querySelector("div#price_section span.line-through");
+          const offerEl = document.querySelector("div#price_section span.jm-badge");
+          const sellerEl = document.querySelector("section#buybox_soldby_container h2.jm-body-m-bold.jm-fc-primary-60");
+          const descriptionEl = document.querySelector("div#pdp_description");
+          const imagesEls = document.querySelectorAll("img.swiper-thumb-slides-img, img.largeimage.swiper-slide-img");
 
-          // Price (current selected variant)
-          const priceElement = document.querySelector("div.tw-text-400.tw-font-bold");
-          const price = priceElement ? priceElement.textContent.trim() : "N/A";
-
-          // MRP if discounted (line-through)
-          const mrpElement = document.querySelector("div.tw-text-300.tw-font-medium.tw-line-through");
-          const mrp = mrpElement ? mrpElement.textContent.trim() : "N/A";
-
-          // Information section (Product Details)
+          // Extract specifications
           const info = {};
-          document.querySelectorAll("div.tw-flex.tw-flex-col.tw-gap-1\\.5.tw-break-words").forEach((el) => {
-            const key = el.querySelector("div.tw-text-300.tw-font-medium")?.textContent.trim() || null;
-            const value = el.querySelector("div.tw-text-200.tw-font-regular.tw-whitespace-pre-wrap")?.textContent.trim() || null;
+          document.querySelectorAll("table.product-specifications-table tbody tr").forEach((row) => {
+            const key = row.querySelector("th")?.textContent.trim();
+            const value = row.querySelector("td")?.textContent.trim();
             if (key && value) info[key] = value;
           });
 
-          // Highlights section
-          document.querySelectorAll("div.tw-bg-grey-100.tw-w-fit.tw-flex-none.tw-rounded-2xl.tw-px-4.tw-pt-5").forEach((el) => {
-            const key = el.querySelector("div.tw-text-100.tw-font-medium")?.textContent.trim() || null;
-            const value = el.querySelector("div.tw-text-300.tw-font-semibold")?.textContent.trim() || null;
-            if (key && value) info[key] = value;
-          });
-
-          // Description from Key Features if present
-          const description = info["Key Features"] || "N/A";
-
-          // Images (main and carousel)
-          const images = Array.from(
-            document.querySelectorAll('img[src^="https://cdn.grofers.com/cdn-cgi/image/f=auto,fit=scale-down,q=85,metadata=none,w="]')
-          )
+          // Extract images
+          const images = Array.from(imagesEls)
             .map((img) => img.src)
-            .filter((src) => src.includes("/da/cms-assets/"))
+            .filter((src) => src.includes("jiomart.com/images/product/original"))
             .join("; ") || "N/A";
 
+          console.log(`PDP - Name: ${nameEl ? nameEl.textContent.trim() : "Not found"}`);
+          console.log(`PDP - Brand: ${brandEl ? brandEl.textContent.trim() : "Not found"}`);
+          console.log(`PDP - Price: ${priceEl ? priceEl.textContent.trim() : "Not found"}`);
+          console.log(`PDP - MRP: ${mrpEl ? mrpEl.textContent.trim() : "Not found"}`);
+          console.log(`PDP - Offer: ${offerEl ? offerEl.textContent.trim() : "Not found"}`);
+          console.log(`PDP - Seller: ${sellerEl ? sellerEl.textContent.trim() : "Not found"}`);
+          console.log(`PDP - Description: ${descriptionEl ? descriptionEl.textContent.trim() : "Not found"}`);
+          console.log(`PDP - Images: ${images}`);
+
           return {
-            name,
-            price,
-            mrp,
-            description,
+            name: nameEl ? nameEl.textContent.trim() : "N/A",
+            brand: brandEl ? brandEl.textContent.trim() : "N/A",
+            price: priceEl ? priceEl.textContent.trim() : "N/A",
+            mrp: mrpEl ? mrpEl.textContent.trim() : "N/A",
+            offer: offerEl ? offerEl.textContent.trim() : "N/A",
+            seller: sellerEl ? sellerEl.textContent.trim() : "N/A",
+            description: descriptionEl ? descriptionEl.textContent.trim() : "N/A",
             images,
             info,
           };
         });
 
-        // Calculate offer %
-        const priceNum = productDetails.price !== "N/A" ? parseFloat(productDetails.price.replace("₹", "")) : null;
-        const mrpNum = productDetails.mrp !== "N/A" ? parseFloat(productDetails.mrp.replace("₹", "")) : null;
-        const offer = priceNum && mrpNum ? (((mrpNum - priceNum) / mrpNum) * 100).toFixed(2) + "%" : "N/A";
-
-        // Merge everything
         products[i] = {
           name: productDetails.name,
-          pack: products[i].pack,
-          link: products[i].link,
-          image: productDetails.images.split("; ")[0] || "N/A",
+          brand: productDetails.brand,
           price: productDetails.price,
           mrp: productDetails.mrp,
-          offer,
+          offer: productDetails.offer,
+          seller: productDetails.seller,
           description: productDetails.description,
           images: productDetails.images,
-          ...productDetails.info, // spread all info fields dynamically
+          image: products[i].image,
+          link: products[i].link,
+          ...productDetails.info,
         };
 
         console.log(`Extracted details for ${products[i].name}:`, products[i]);
         allProductDetails.push(products[i]);
         success = true;
 
-        // Save immediately after each product
+        // Save immediately
         try {
-          await saveToExcel([products[i]], "blinkit_products.xlsx", !isFirstSave);
+          await saveToExcel([products[i]], "jiomart_products.xlsx", !isFirstSave);
           isFirstSave = false;
         } catch (error) {
           console.error(`Failed to save product ${products[i].name}: ${error.message}`);
         }
 
-        // Go back to listing page
-        await page.goBack({ waitUntil: "networkidle2" });
-        await page.waitForSelector(cardSelector, { timeout: 90000 });
+        await detailPage.close();
       } catch (error) {
         console.error(`Attempt ${4 - retries} failed for ${products[i].name}: ${error.message}`);
         retries--;
@@ -246,32 +264,21 @@ async function scrapeProductData() {
           console.error(`All retries failed for ${products[i].name}. Saving partial data.`);
           allProductDetails.push(products[i]);
           try {
-            await saveToExcel([products[i]], "blinkit_products.xlsx", !isFirstSave);
+            await saveToExcel([products[i]], "jiomart_products.xlsx", !isFirstSave);
             isFirstSave = false;
           } catch (saveError) {
             console.error(`Failed to save partial data for ${products[i].name}: ${saveError.message}`);
           }
-          // Try to go back to listing page
-          try {
-            await page.goBack({ waitUntil: "networkidle2" });
-            await page.waitForSelector(cardSelector, { timeout: 90000 });
-          } catch (goBackError) {
-            console.error(`Failed to go back for ${products[i].name}: ${goBackError.message}`);
-            // Reload listing page if goBack fails
-            await retryGoto(page, url);
-            await page.waitForSelector(cardSelector, { timeout: 90000 });
-          }
-        } else {
-          // Wait before retrying
-          await new Promise((resolve) => setTimeout(resolve, 2000));
         }
+        if (detailPage) await detailPage.close();
+        await delay(2000);
       }
     }
   }
 
   console.log("All product details extracted. Performing final save...");
   try {
-    await saveToExcel(allProductDetails, "blinkit_products.xlsx", false);
+    await saveToExcel(allProductDetails, "jiomart_products.xlsx", false);
     console.log(`Final save: Total products extracted: ${allProductDetails.length}. Data saved to Excel.`);
   } catch (error) {
     console.error(`Error in final save: ${error.message}`);
@@ -288,12 +295,12 @@ async function retryGoto(page, url, retries = 3) {
     } catch (error) {
       console.error(`Attempt ${i + 1} failed: ${error.message}`);
       if (i === retries - 1) throw error;
-      await new Promise((resolve) => setTimeout(resolve, 2000));
+      await delay(2000);
     }
   }
 }
 
-scrapeProductData().catch(async (error) => {
-  console.error("Error in scrapeProductData:", error);
+scrapeJioMart().catch(async (error) => {
+  console.error("Error in scrapeJioMart:", error);
   process.exit(1);
 });
