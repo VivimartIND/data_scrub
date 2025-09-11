@@ -7,23 +7,26 @@ async function scrapeProductData() {
   console.log("Launching browser...");
   const browser = await puppeteer.launch({
     headless: false,
-    slowMo: 100,
+    slowMo: 200, // Increased slowMo for more human-like actions
     defaultViewport: { width: 1280, height: 800 },
+    args: ['--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'] // Realistic user-agent
   });
 
   const page = await browser.newPage();
   console.log("Navigating to URL...");
   await page.goto(url, { waitUntil: "networkidle2" });
+  await randomWait(2000, 5000); // Random initial wait after loading
 
   console.log("Scrolling to load all products...");
   let previousHeight = 0;
   while (true) {
-    await page.evaluate(() => window.scrollBy(0, document.body.scrollHeight));
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    await page.evaluate(() => window.scrollBy(0, window.innerHeight)); // Scroll by viewport height for natural scrolling
+    await randomWait(1000, 3000); // Random wait between scrolls
     const newHeight = await page.evaluate(() => document.body.scrollHeight);
     if (newHeight === previousHeight) break;
     previousHeight = newHeight;
   }
+  await randomWait(3000, 6000); // Extra wait after full scroll
 
   console.log("Extracting product details from listing page...");
   const cardSelector = 'div.tw-w-full.tw-px-3[data-pf="reset"]';
@@ -60,8 +63,18 @@ async function scrapeProductData() {
   const allKeys = new Set(); // collect all possible info fields dynamically
 
   for (let i = 0; i < products.length; i++) {
+    await randomWait(3000, 8000); // Random wait before processing each product to mimic human browsing
     console.log(`Opening product page for: ${products[i].name}`);
+
     try {
+      // Hover over the card before clicking to simulate human interaction
+      await page.evaluate((sel, idx) => {
+        const cards = document.querySelectorAll(sel);
+        if (idx >= cards.length) return;
+        cards[idx].dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+      }, cardSelector, i);
+      await randomWait(500, 1500); // Short wait after hover
+
       // Click on the entire card using evaluate to avoid detached node issues
       await page.evaluate((sel, idx) => {
         const cards = document.querySelectorAll(sel);
@@ -71,6 +84,7 @@ async function scrapeProductData() {
 
       // Wait for PDP content to load
       await page.waitForSelector('div.tw-text-600.tw-font-extrabold.tw-line-clamp-50', { timeout: 60000 });
+      await randomWait(2000, 5000); // Random wait after PDP load
 
       products[i].link = page.url();
 
@@ -80,7 +94,7 @@ async function scrapeProductData() {
         const expandButton = buttons.find(b => b.textContent.includes("View more details"));
         if (expandButton) expandButton.click();
       });
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      await randomWait(1000, 3000); // Random wait after expanding details
 
       const productDetails = await page.evaluate(() => {
         const name = document.querySelector("div.tw-text-600.tw-font-extrabold.tw-line-clamp-50")?.textContent.trim() || "N/A";
@@ -161,6 +175,7 @@ async function scrapeProductData() {
       // Go back to listing page
       await page.goBack({ waitUntil: "networkidle2" });
       await page.waitForSelector(cardSelector, { timeout: 60000 });
+      await randomWait(3000, 7000); // Random wait after going back
     } catch (error) {
       console.error(
         `Error while scraping product page for ${products[i].name}:`,
@@ -206,6 +221,12 @@ async function scrapeProductData() {
   console.log("Data saved to blinkit_products.xlsx ✅");
 
   await browser.close();
+}
+
+// Helper for random waits (min, max in ms)
+async function randomWait(min, max) {
+  const waitTime = Math.floor(Math.random() * (max - min + 1)) + min;
+  return new Promise((resolve) => setTimeout(resolve, waitTime));
 }
 
 // retry navigation helper
