@@ -7,28 +7,44 @@ async function scrapeProductData() {
   console.log("Launching browser...");
   const browser = await puppeteer.launch({
     headless: false,
-    slowMo: 200, // Increased slowMo for more human-like actions
+    slowMo: 200,
     defaultViewport: { width: 1280, height: 800 },
-    args: ['--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'] // Realistic user-agent
+    args: ['--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36']
   });
 
   const page = await browser.newPage();
   console.log("Navigating to URL...");
   await page.goto(url, { waitUntil: "networkidle2" });
-  await randomWait(2000, 5000); // Random initial wait after loading
+  await randomWait(2000, 5000);
 
-  console.log("Scrolling to load all products...");
+  console.log("Scrolling product container to load all products...");
   let previousHeight = 0;
   while (true) {
-    await page.evaluate(() => window.scrollBy(0, window.innerHeight)); // Scroll by viewport height for natural scrolling
-    await randomWait(3000, 5000); // Increased random wait between scrolls
+    const newHeight = await page.evaluate(() => {
+      const container = document.querySelector('#plpContainer');
+      if (!container) return document.body.scrollHeight;
+      container.scrollBy(0, container.scrollHeight);
+      return container.scrollHeight;
+    });
+    await randomWait(3000, 6000);
+    if (newHeight === previousHeight) break;
+    previousHeight = newHeight;
+  }
+  await randomWait(3000, 6000);
+
+  // Scroll main page as fallback
+  console.log("Scrolling main page to ensure all products are loaded...");
+  previousHeight = 0;
+  while (true) {
+    await page.evaluate(() => window.scrollBy(0, window.innerHeight));
+    await randomWait(3000, 6000);
     const newHeight = await page.evaluate(() => document.body.scrollHeight);
     if (newHeight === previousHeight) break;
     previousHeight = newHeight;
   }
-  await randomWait(3000, 6000); // Extra wait after full scroll
+  await randomWait(3000, 6000);
 
-  // Attempt to click "Show more" or similar buttons if present
+  // Click "Show more" or similar buttons if present
   console.log("Clicking 'Show more' if present...");
   let loadMoreClicked = 0;
   while (true) {
@@ -47,7 +63,7 @@ async function scrapeProductData() {
     if (!loadMore) break;
     await randomWait(3000, 6000);
     loadMoreClicked++;
-    if (loadMoreClicked > 50) break; // Safety limit
+    if (loadMoreClicked > 50) break;
   }
 
   console.log("Extracting product details from listing page...");
@@ -76,65 +92,64 @@ async function scrapeProductData() {
       return priceEl ? priceEl.textContent.trim() : "N/A";
     }, cardSelector, i);
 
-    // Image not present in provided listing snippet, will fetch from PDP
     products.push({ name, pack, price, image: "N/A", link: "" });
   }
 
   console.log(`Found ${products.length} products. Now fetching details for each product...`);
 
-  const allKeys = new Set(); // collect all possible info fields dynamically
+  const allKeys = new Set();
 
   for (let i = 0; i < products.length; i++) {
-    await randomWait(3000, 8000); // Random wait before processing each product to mimic human browsing
+    await randomWait(3000, 8000);
     console.log(`Opening product page for: ${products[i].name}`);
 
     try {
-      // Hover over the card before clicking to simulate human interaction
       await page.evaluate((sel, idx) => {
         const cards = document.querySelectorAll(sel);
         if (idx >= cards.length) return;
         cards[idx].dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
       }, cardSelector, i);
-      await randomWait(500, 1500); // Short wait after hover
+      await randomWait(500, 1500);
 
-      // Click on the entire card using evaluate to avoid detached node issues
       await page.evaluate((sel, idx) => {
         const cards = document.querySelectorAll(sel);
         if (idx >= cards.length) return;
         cards[idx].click();
       }, cardSelector, i);
 
-      // Wait for PDP content to load
       await page.waitForSelector('div.tw-text-600.tw-font-extrabold.tw-line-clamp-50', { timeout: 60000 });
-      await randomWait(2000, 5000); // Random wait after PDP load
+      await randomWait(2000, 5000);
 
       products[i].link = page.url();
 
-      // Expand "View more details" if present
       await page.evaluate(() => {
         const buttons = Array.from(document.querySelectorAll("button"));
         const expandButton = buttons.find(b => b.textContent.includes("View more details"));
         if (expandButton) expandButton.click();
       });
-      await randomWait(1000, 3000); // Random wait after expanding details
+      await randomWait(1000, 3000);
 
       const productDetails = await page.evaluate(() => {
         const name = document.querySelector("div.tw-text-600.tw-font-extrabold.tw-line-clamp-50")?.textContent.trim() || "N/A";
 
-        // Price (current selected variant)
+        // Price
         const priceElement = document.querySelector("div.tw-text-400.tw-font-bold");
         const price = priceElement ? priceElement.textContent.trim() : "N/A";
 
-        // MRP if discounted (line-through)
-        const mrpElement = document.querySelector("div.tw-text-300.tw-font-medium.tw-line-through");
-        let mrp = mrpElement ? mrpElement.textContent.trim() : "N/A";
-
-        // If no MRP, assume it's the same as price (for non-discounted items)
-        if (mrp === "N/A") {
-          mrp = price;
+        // MRP (try line-through first, then fallback to other elements)
+        let mrpElement = document.querySelector("div.tw-text-300.tw-font-medium.tw-line-through");
+        let mrp = mrpElement ? mrpElement.textContent.trim() : null;
+        if (!mrp) {
+          const mrpAlt = Array.from(document.querySelectorAll("div")).find(
+            el => el.textContent.includes("MRP") && el.textContent.includes("₹")
+          );
+          mrp = mrpAlt ? mrpAlt.textContent.match(/₹\d+/)?.[0] || "N/A" : "N/A";
+        }
+        if (mrp === "N/A" && price !== "N/A") {
+          mrp = price; // Assume MRP = price if no discount
         }
 
-        // Information section (Product Details)
+        // Information section
         const info = {};
         document.querySelectorAll("div.tw-flex.tw-flex-col.tw-gap-1\\.5.tw-break-words").forEach((el) => {
           const key = el.querySelector("div.tw-text-300.tw-font-medium")?.textContent.trim() || null;
@@ -149,10 +164,10 @@ async function scrapeProductData() {
           if (key && value) info[key] = value;
         });
 
-        // Description from Description or Key Features if present
+        // Description (prefer Description, fallback to Key Features)
         const description = info["Description"] || info["Key Features"] || "N/A";
 
-        // Images (main and carousel)
+        // Images
         const images = Array.from(
           document.querySelectorAll('img[src^="https://cdn.grofers.com/cdn-cgi/image/f=auto,fit=scale-down,q=85,metadata=none,w="]')
         ).map((img) => img.src).filter(src => src.includes("/da/cms-assets/")).join("; ") || "N/A";
@@ -192,17 +207,15 @@ async function scrapeProductData() {
         offer: offer,
         description: productDetails.description,
         images: productDetails.images,
-        ...productDetails.info, // spread all info fields dynamically
+        ...productDetails.info,
       };
 
-      // collect keys for Excel headers
       Object.keys(productDetails.info).forEach((k) => allKeys.add(k));
       console.log(`Extracted details for ${products[i].name}:`, products[i]);
 
-      // Go back to listing page
       await page.goBack({ waitUntil: "networkidle2" });
       await page.waitForSelector(cardSelector, { timeout: 60000 });
-      await randomWait(3000, 7000); // Random wait after going back
+      await randomWait(3000, 7000);
     } catch (error) {
       console.error(
         `Error while scraping product page for ${products[i].name}:`,
@@ -213,11 +226,9 @@ async function scrapeProductData() {
 
   console.log("All product details extracted. Saving to Excel...");
 
-  // Create Excel workbook
   const workbook = new ExcelJS.Workbook();
   const worksheet = workbook.addWorksheet("Products");
 
-  // Basic columns
   const baseColumns = [
     { header: "Name", key: "name", width: 40 },
     { header: "Pack", key: "pack", width: 20 },
@@ -230,7 +241,6 @@ async function scrapeProductData() {
     { header: "Images", key: "images", width: 60 },
   ];
 
-  // Dynamic info columns
   const infoColumns = Array.from(allKeys).map((key) => ({
     header: key,
     key: key,
@@ -239,7 +249,6 @@ async function scrapeProductData() {
 
   worksheet.columns = [...baseColumns, ...infoColumns];
 
-  // Add rows
   products.forEach((product) => {
     worksheet.addRow(product);
   });
@@ -250,13 +259,11 @@ async function scrapeProductData() {
   await browser.close();
 }
 
-// Helper for random waits (min, max in ms)
 async function randomWait(min, max) {
   const waitTime = Math.floor(Math.random() * (max - min + 1)) + min;
   return new Promise((resolve) => setTimeout(resolve, waitTime));
 }
 
-// retry navigation helper
 async function retryGoto(page, url, retries = 3) {
   for (let i = 0; i < retries; i++) {
     try {

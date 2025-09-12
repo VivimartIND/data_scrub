@@ -6,44 +6,33 @@ const url = "https://www.jiomart.com/c/groceries/biscuits-drinks-packaged-foods/
 // Custom delay function
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-async function saveToExcel(products, filename = "jiomart_products.xlsx", append = false) {
+async function saveToExcel(products, filename = "jiomart_products.xlsx") {
   const workbook = new ExcelJS.Workbook();
-  
-  if (append) {
-    try {
-      await workbook.xlsx.readFile(filename);
-    } catch (error) {
-      console.log(`No existing file found or error reading ${filename}. Creating new workbook.`);
-    }
-  }
+  const worksheet = workbook.addWorksheet("Products");
 
-  const worksheet = workbook.getWorksheet("Products") || workbook.addWorksheet("Products");
+  const allKeys = new Set();
+  products.forEach((product) => {
+    Object.keys(product).forEach((key) => allKeys.add(key));
+  });
 
-  if (!append) {
-    const allKeys = new Set();
-    products.forEach((product) => {
-      Object.keys(product).forEach((key) => allKeys.add(key));
-    });
+  const baseColumns = [
+    { header: "Name", key: "name", width: 40 },
+    { header: "Brand", key: "brand", width: 20 },
+    { header: "Price", key: "price", width: 15 },
+    { header: "MRP", key: "mrp", width: 15 },
+    { header: "Offer", key: "offer", width: 15 },
+    { header: "Seller", key: "seller", width: 30 },
+    { header: "Description", key: "description", width: 60 },
+    { header: "Images", key: "images", width: 60 },
+    { header: "Link", key: "link", width: 60 },
+    { header: "Image", key: "image", width: 50 },
+  ];
 
-    const baseColumns = [
-      { header: "Name", key: "name", width: 40 },
-      { header: "Brand", key: "brand", width: 20 },
-      { header: "Price", key: "price", width: 15 },
-      { header: "MRP", key: "mrp", width: 15 },
-      { header: "Offer", key: "offer", width: 15 },
-      { header: "Seller", key: "seller", width: 30 },
-      { header: "Description", key: "description", width: 60 },
-      { header: "Images", key: "images", width: 60 },
-      { header: "Link", key: "link", width: 60 },
-      { header: "Image", key: "image", width: 50 },
-    ];
+  const infoColumns = Array.from(allKeys)
+    .filter((key) => !baseColumns.some((col) => col.key === key))
+    .map((key) => ({ header: key, key, width: 40 }));
 
-    const infoColumns = Array.from(allKeys)
-      .filter((key) => !baseColumns.some((col) => col.key === key))
-      .map((key) => ({ header: key, key, width: 40 }));
-
-    worksheet.columns = [...baseColumns, ...infoColumns];
-  }
+  worksheet.columns = [...baseColumns, ...infoColumns];
 
   products.forEach((product) => {
     worksheet.addRow(product);
@@ -111,13 +100,6 @@ async function scrapeJioMart() {
       const imageEl = card.querySelector("img.lazyautosizes");
       const linkEl = card.querySelector("a.plp-card-wrapper");
 
-      console.log(`Card ${idx + 1} - Name: ${nameEl ? nameEl.textContent.trim() : "Not found"}`);
-      console.log(`Card ${idx + 1} - Price: ${priceEl ? priceEl.textContent.trim() : "Not found"}`);
-      console.log(`Card ${idx + 1} - MRP: ${mrpEl ? mrpEl.textContent.trim() : "Not found"}`);
-      console.log(`Card ${idx + 1} - Offer: ${offerEl ? offerEl.textContent.trim() : "Not found"}`);
-      console.log(`Card ${idx + 1} - Image: ${imageEl ? imageEl.src : "Not found"}`);
-      console.log(`Card ${idx + 1} - Link: ${linkEl ? linkEl.href : "Not found"}`);
-
       return {
         name: nameEl ? nameEl.textContent.trim() : "N/A",
         price: priceEl ? priceEl.textContent.trim() : "N/A",
@@ -138,14 +120,13 @@ async function scrapeJioMart() {
   console.log(`Found ${products.length} products. Fetching details...`);
 
   const allProductDetails = [];
-  let isFirstSave = true;
 
   // Handle Ctrl+C
   process.on("SIGINT", async () => {
     console.log("\nCaught interrupt signal. Saving collected data...");
     try {
       if (allProductDetails.length > 0) {
-        await saveToExcel(allProductDetails, "jiomart_products.xlsx", !isFirstSave);
+        await saveToExcel(allProductDetails, "jiomart_products.xlsx");
         console.log(`Saved ${allProductDetails.length} products to jiomart_products.xlsx`);
       } else {
         console.log("No products to save.");
@@ -174,10 +155,8 @@ async function scrapeJioMart() {
         detailPage = await browser.newPage();
         await retryGoto(detailPage, products[i].link);
 
-        // Wait for product name
         await detailPage.waitForSelector("div#pdp_product_name", { timeout: 15000 }).catch(() => console.log(`Name element not found for ${products[i].link}`));
 
-        // Expand "More Details" for description and specifications
         await detailPage.evaluate(() => {
           const buttons = document.querySelectorAll("button.pdp-more-details");
           buttons.forEach((button) => button.click());
@@ -194,7 +173,6 @@ async function scrapeJioMart() {
           const descriptionEl = document.querySelector("div#pdp_description");
           const imagesEls = document.querySelectorAll("img.swiper-thumb-slides-img, img.largeimage.swiper-slide-img");
 
-          // Extract specifications
           const info = {};
           document.querySelectorAll("table.product-specifications-table tbody tr").forEach((row) => {
             const key = row.querySelector("th")?.textContent.trim();
@@ -202,20 +180,10 @@ async function scrapeJioMart() {
             if (key && value) info[key] = value;
           });
 
-          // Extract images
           const images = Array.from(imagesEls)
             .map((img) => img.src)
             .filter((src) => src.includes("jiomart.com/images/product/original"))
             .join("; ") || "N/A";
-
-          console.log(`PDP - Name: ${nameEl ? nameEl.textContent.trim() : "Not found"}`);
-          console.log(`PDP - Brand: ${brandEl ? brandEl.textContent.trim() : "Not found"}`);
-          console.log(`PDP - Price: ${priceEl ? priceEl.textContent.trim() : "Not found"}`);
-          console.log(`PDP - MRP: ${mrpEl ? mrpEl.textContent.trim() : "Not found"}`);
-          console.log(`PDP - Offer: ${offerEl ? offerEl.textContent.trim() : "Not found"}`);
-          console.log(`PDP - Seller: ${sellerEl ? sellerEl.textContent.trim() : "Not found"}`);
-          console.log(`PDP - Description: ${descriptionEl ? descriptionEl.textContent.trim() : "Not found"}`);
-          console.log(`PDP - Images: ${images}`);
 
           return {
             name: nameEl ? nameEl.textContent.trim() : "N/A",
@@ -248,14 +216,6 @@ async function scrapeJioMart() {
         allProductDetails.push(products[i]);
         success = true;
 
-        // Save immediately
-        try {
-          await saveToExcel([products[i]], "jiomart_products.xlsx", !isFirstSave);
-          isFirstSave = false;
-        } catch (error) {
-          console.error(`Failed to save product ${products[i].name}: ${error.message}`);
-        }
-
         await detailPage.close();
       } catch (error) {
         console.error(`Attempt ${4 - retries} failed for ${products[i].name}: ${error.message}`);
@@ -263,12 +223,6 @@ async function scrapeJioMart() {
         if (retries === 0) {
           console.error(`All retries failed for ${products[i].name}. Saving partial data.`);
           allProductDetails.push(products[i]);
-          try {
-            await saveToExcel([products[i]], "jiomart_products.xlsx", !isFirstSave);
-            isFirstSave = false;
-          } catch (saveError) {
-            console.error(`Failed to save partial data for ${products[i].name}: ${saveError.message}`);
-          }
         }
         if (detailPage) await detailPage.close();
         await delay(2000);
@@ -278,7 +232,7 @@ async function scrapeJioMart() {
 
   console.log("All product details extracted. Performing final save...");
   try {
-    await saveToExcel(allProductDetails, "jiomart_products.xlsx", false);
+    await saveToExcel(allProductDetails, "jiomart_products.xlsx");
     console.log(`Final save: Total products extracted: ${allProductDetails.length}. Data saved to Excel.`);
   } catch (error) {
     console.error(`Error in final save: ${error.message}`);
