@@ -1,7 +1,7 @@
 const puppeteer = require("puppeteer");
 const ExcelJS = require("exceljs");
 
-const url = "https://blinkit.com/cn/rolling-paper/cid/229/1982";
+const url = "https://blinkit.com/cn/vegetables-fruits/fresh-vegetables/cid/1487/1489";
 
 async function scrapeProductData() {
   console.log("Launching browser...");
@@ -21,12 +21,34 @@ async function scrapeProductData() {
   let previousHeight = 0;
   while (true) {
     await page.evaluate(() => window.scrollBy(0, window.innerHeight)); // Scroll by viewport height for natural scrolling
-    await randomWait(1000, 3000); // Random wait between scrolls
+    await randomWait(3000, 5000); // Increased random wait between scrolls
     const newHeight = await page.evaluate(() => document.body.scrollHeight);
     if (newHeight === previousHeight) break;
     previousHeight = newHeight;
   }
   await randomWait(3000, 6000); // Extra wait after full scroll
+
+  // Attempt to click "Show more" or similar buttons if present
+  console.log("Clicking 'Show more' if present...");
+  let loadMoreClicked = 0;
+  while (true) {
+    const loadMore = await page.evaluate(() => {
+      const elements = Array.from(document.querySelectorAll("button, div, a"));
+      const button = elements.find(el => {
+        const text = el.textContent.toLowerCase();
+        return text.includes("show more") || text.includes("load more") || text.includes("view more") || text.includes("see more");
+      });
+      if (button) {
+        button.click();
+        return true;
+      }
+      return false;
+    });
+    if (!loadMore) break;
+    await randomWait(3000, 6000);
+    loadMoreClicked++;
+    if (loadMoreClicked > 50) break; // Safety limit
+  }
 
   console.log("Extracting product details from listing page...");
   const cardSelector = 'div.tw-w-full.tw-px-3[data-pf="reset"]';
@@ -105,7 +127,12 @@ async function scrapeProductData() {
 
         // MRP if discounted (line-through)
         const mrpElement = document.querySelector("div.tw-text-300.tw-font-medium.tw-line-through");
-        const mrp = mrpElement ? mrpElement.textContent.trim() : "N/A";
+        let mrp = mrpElement ? mrpElement.textContent.trim() : "N/A";
+
+        // If no MRP, assume it's the same as price (for non-discounted items)
+        if (mrp === "N/A") {
+          mrp = price;
+        }
 
         // Information section (Product Details)
         const info = {};
@@ -122,8 +149,8 @@ async function scrapeProductData() {
           if (key && value) info[key] = value;
         });
 
-        // Description from Key Features if present
-        const description = info["Key Features"] || "N/A";
+        // Description from Description or Key Features if present
+        const description = info["Description"] || info["Key Features"] || "N/A";
 
         // Images (main and carousel)
         const images = Array.from(
@@ -150,7 +177,7 @@ async function scrapeProductData() {
           ? parseFloat(productDetails.mrp.replace("₹", ""))
           : null;
       const offer =
-        priceNum && mrpNum
+        priceNum && mrpNum && mrpNum > priceNum
           ? (((mrpNum - priceNum) / mrpNum) * 100).toFixed(2) + "%"
           : "N/A";
 
