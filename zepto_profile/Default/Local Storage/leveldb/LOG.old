@@ -1,0 +1,6 @@
+2025/12/11-09:20:22.414 2f98 Reusing MANIFEST D:\Vivimart\data_scrub\zepto_profile\Default\Local Storage\leveldb/MANIFEST-000001
+2025/12/11-09:20:22.419 2f98 Recovering log #3
+2025/12/11-09:20:22.426 2f98 Reusing old log D:\Vivimart\data_scrub\zepto_profile\Default\Local Storage\leveldb/000003.log 
+2025/12/11-09:38:24.653 2f98 Level-0 table #5: started
+2025/12/11-09:38:24.676 2f98 Level-0 table #5: 15690 bytes OK
+2025/12/11-09:38:24.681 2f98 Delete type=0 #3

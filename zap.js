@@ -1,338 +1,265 @@
-const puppeteer = require("puppeteer");
-const ExcelJS = require("exceljs");
+const puppeteer = require('puppeteer-extra');
+const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+const ExcelJS = require('exceljs');
+puppeteer.use(StealthPlugin());
 
-const url =
-  "https://www.zeptonow.com/cn/masala-dry-fruits-more/masala-dry-fruits-more/cid/0c2ccf87-e32c-4438-9560-8d9488fc73e0/scid/8b44cef2-1bab-407e-aadd-29254e6778fa";
+const CATEGORY_URL = "https://www.zeptonow.com/cn/masala-dry-fruits-more/masala-dry-fruits-more/cid/0c2ccf87-e32c-4438-9560-8d9488fc73e0/scid/8b44cef2-1bab-407e-aadd-29254e6778fa";
 
-const TIMEOUTS = {
-  navigation: 30000,
-  selector: 5000,
-};
+async function delay(min, max) {
+  const ms = Math.floor(Math.random() * (max - min + 1)) + min;
+  console.log(`Waiting ${ms}ms...`);
+  await new Promise(r => setTimeout(r, ms));
+}
 
-async function scrapeProductData() {
-  console.log("Running zap.js version 2025-09-11-01");
-  let pLimitFn;
-  try {
-    const { default: pLimit } = await import("p-limit");
-    pLimitFn = pLimit;
-    console.log("p-limit loaded successfully for concurrent processing.");
-  } catch (error) {
-    console.warn("Warning: Failed to load p-limit. Falling back to sequential mode. Install p-limit with `npm install p-limit`. Error: " + error.message);
-    pLimitFn = null;
+async function safeGoto(page, url, label = "") {
+  console.log(`Navigating to: ${url} ${label}`);
+  for (let i = 0; i < 3; i++) {
+    try {
+      const response = await page.goto(url, { waitUntil: 'networkidle0', timeout: 50000 });
+      const status = response.status();
+      const finalUrl = page.url();
+
+      console.log(`→ Response: ${status} | Final URL: ${finalUrl.substring(0, 80)}${finalUrl.length > 80 ? '...' : ''}`);
+
+      if (status === 503 || finalUrl.includes('captcha') || finalUrl.includes('blocked') || finalUrl.includes('cf-')) {
+        console.warn(`Blocked detected (status ${status}) – retrying...`);
+        throw new Error('Blocked');
+      }
+      return true;
+    } catch (e) {
+      console.warn(`Retry ${i + 1}/3 failed: ${e.message}`);
+      if (i === 2) return false;
+      await delay(6000, 10000);
+    }
   }
+  return false;
+}
 
-  console.log("Launching browser...");
+async function scrape() {
+  console.log("\nZepto Scraper 2025 – ULTRA DEBUG MODE ACTIVATED\n");
+
   const browser = await puppeteer.launch({
-    headless: true,
-    defaultViewport: { width: 1280, height: 800 },
-    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
-    args: [
-      "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-    ],
+    headless: false,
+    defaultViewport: null,
+    userDataDir: './zepto_profile',
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--start-maximized']
   });
 
   const page = await browser.newPage();
-  await page.setCookie({
-    name: "session",
-    value: "default",
-    domain: "www.zeptonow.com",
-    path: "/",
+
+  // Anti-detection
+  await page.evaluateOnNewDocument(() => {
+    Object.defineProperty(navigator, 'webdriver', { get: () => false });
+    window.chrome = { runtime: {}, app: {}, LoadTimes: () => {} };
+    Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3] });
   });
-  console.log("Navigating to URL...");
-  await retryGoto(page, url);
 
-  console.log("Scrolling to load all products...");
-  let previousHeight = 0;
-  let scrollAttempts = 0;
-  const maxScrollAttempts = 10;
-  while (scrollAttempts < maxScrollAttempts) {
-    await page.evaluate(() => window.scrollBy(0, window.innerHeight * 2));
-    await randomWait(500, 1500);
-    const newHeight = await page.evaluate(() => document.body.scrollHeight);
-    if (newHeight === previousHeight) break;
-    previousHeight = newHeight;
-    scrollAttempts++;
-  }
-  await randomWait(1000, 3000);
-
-  try {
-    const loadMore = await page.evaluateHandle(() => {
-      const buttons = Array.from(document.querySelectorAll('button, [class*="load-more"], [class*="more"]'));
-      return buttons.find((btn) => btn.textContent.toLowerCase().includes("load more") || btn.textContent.toLowerCase().includes("more"));
-    });
-    if (loadMore.asElement()) {
-      console.log("Clicking Load More button...");
-      await loadMore.click();
-      await randomWait(2000, 4000);
-    } else {
-      console.log("No Load More button found.");
-    }
-  } catch (error) {
-    console.warn("Failed to check for Load More button:", error.message);
+  // Step 1: Open homepage
+  if (!await safeGoto(page, 'https://www.zeptonow.com', "(Homepage)")) {
+    console.error("Cannot reach Zepto homepage → exiting");
+    await browser.close();
+    return;
   }
 
-  console.log("Extracting product details from listing page...");
-  const cardSelector = 'a[href^="/pn/"]';
-  const cardHandles = await page.$$(cardSelector);
-  const products = [];
-  for (let i = 0; i < cardHandles.length; i++) {
-    const name = await page.evaluate(
-      (sel, idx) => {
-        const cards = document.querySelectorAll(sel);
-        if (idx >= cards.length) return "N/A";
-        const imgEl = cards[idx].querySelector("img");
-        return imgEl ? imgEl.alt.trim() : "N/A";
-      },
-      cardSelector,
-      i
-    );
-
-    const link = await page.evaluate(
-      (sel, idx) => {
-        const cards = document.querySelectorAll(sel);
-        if (idx >= cards.length) return "N/A";
-        return "https://www.zeptonow.com" + cards[idx].getAttribute("href");
-      },
-      cardSelector,
-      i
-    );
-
-    const image = await page.evaluate(
-      (sel, idx) => {
-        const cards = document.querySelectorAll(sel);
-        if (idx >= cards.length) return "N/A";
-        const imgEl = cards[idx].querySelector("img");
-        return imgEl ? (imgEl.src || imgEl.getAttribute("data-src") || "N/A") : "N/A";
-      },
-      cardSelector,
-      i
-    );
-
-    products.push({ name, link, image });
-  }
-
-  if (products.length === 0) {
-    console.error("No products found. Logging page content for debugging...");
-    const pageContent = await page.evaluate(() => document.body.innerHTML.substring(0, 1000)).catch(() => "N/A");
-    console.log(`Main page content: ${pageContent}`);
-  }
-  console.log(`Found ${products.length} products. Now fetching details for each product...`);
-
-  const allKeys = new Set();
-
-  if (pLimitFn) {
-    const limit = pLimitFn(3);
-    const productBatches = [];
-    for (let i = 0; i < products.length; i += 3) {
-      productBatches.push(products.slice(i, i + 3));
-    }
-    for (const batch of productBatches) {
-      await Promise.all(
-        batch.map((product, idx) =>
-          limit(async () => {
-            const globalIdx = products.indexOf(product);
-            console.log(`Processing product ${globalIdx + 1}/${products.length}: ${product.name}`);
-            await processProductPage(browser, product, globalIdx, products, allKeys);
-          })
-        )
-      );
-      await randomWait(1000, 2000);
-    }
+  // Step 2: Check if location needed
+  const locationInput = await page.$('input[placeholder*="pincode" i], input[placeholder*="Pincode" i]');
+  if (locationInput) {
+    console.log("Location popup detected! Please select your area/pincode manually...");
+    console.log("After you see products → press ENTER in this terminal");
+    await new Promise(r => process.stdin.once('data', r));
   } else {
-    for (let i = 0; i < products.length; i++) {
-      console.log(`Processing product ${i + 1}/${products.length}: ${products[i].name}`);
-      await processProductPage(browser, products[i], i, products, allKeys);
-    }
+    console.log("Location already saved from previous run");
   }
 
-  console.log("All product details extracted. Saving to Excel...");
+  // Step 3: Go to category
+  if (!await safeGoto(page, CATEGORY_URL, "(Category Page)")) {
+    console.error("Failed to load category page");
+    await browser.close();
+    return;
+  }
 
-  const workbook = new ExcelJS.Workbook();
-  const worksheet = workbook.addWorksheet("Products");
+  // Step 4: Scroll & load all products
+  console.log("Scrolling to load all products...");
+  for (let i = 0; i < 25; i++) {
+    await page.evaluate(() => window.scrollBy(0, 1200));
+    await delay(1000, 2000);
+  }
 
-  const baseColumns = [
-    { header: "Name", key: "name", width: 40 },
-    { header: "Link", key: "link", width: 60 },
-    { header: "Image", key: "image", width: 50 },
+  // Step 5: Extract only real product cards
+  const products = await page.evaluate(() => {
+    const links = Array.from(document.querySelectorAll('a[href^="/pn/"]'));
+    return links
+      .filter(a => {
+        const href = a.getAttribute('href') || '';
+        const text = (a.textContent || '').toLowerCase();
+        return href.includes('/pvid/') &&
+               a.querySelector('img') &&
+               !text.includes('load more') &&
+               !text.includes('show more') &&
+               !text.includes('view all');
+      })
+      .map(a => {
+        const img = a.querySelector('img');
+        return {
+          name: img?.alt?.trim() || "No Alt Text",
+          link: "https://www.zeptonow.com" + a.getAttribute('href'),
+          image: img?.src || img?.dataset?.src || "No Image"
+        };
+      });
+  });
+
+  console.log(`Found ${products.length} valid product cards on listing page\n`);
+
+  const results = [];
+  const extraKeys = new Set();
+
+  // Step 6: Scrape each product one by one
+  for (let i = 0; i < products.length; i++) {
+    const p = products[i];
+    console.log(`\n[${i + 1}/${products.length}] Processing → ${p.name.substring(0, 60)}...`);
+
+    const tab = await browser.newPage();
+
+    let success = false;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      console.log(`   Attempt ${attempt}/2 → Opening product page...`);
+
+      if (await safeGoto(tab, p.link, `(Product ${i + 1})`)) {
+
+        // Wait until price appears or h1 loads
+        const priceLoaded = await tab.waitForFunction(() => {
+          return document.body.innerText.includes('₹') || document.querySelector('h1');
+        }, { timeout: 18000 }).catch(() => false);
+
+        if (!priceLoaded) {
+          console.warn(`   Price or title not loaded in 18s – retrying...`);
+          await tab.close();
+          await delay(8000, 12000);
+          continue;
+        }
+
+        await delay(4000, 7000); // Let React finish
+
+        const data = await tab.evaluate(() => {
+          // Title
+          const title = document.querySelector('h1')?.innerText.trim() || "No Title";
+
+          // All ₹ elements
+          const rupees = Array.from(document.querySelectorAll('span, p, div'))
+            .filter(el => /₹\d/.test(el.innerText))
+            .map(el => ({
+              text: el.innerText.trim(),
+              size: parseFloat(getComputedStyle(el).fontSize) || 0,
+              color: getComputedStyle(el).color
+            }));
+
+          // Selling price = largest font size + green/not gray
+          const sellingPriceEl = rupees
+            .filter(r => !r.text.includes('OFF'))
+            .sort((a, b) => b.size - a.size)[0];
+          const sellingPrice = sellingPriceEl ? sellingPriceEl.text.match(/₹[\d,.,]+/)?.[0] || "N/A" : "N/A";
+
+          // MRP = either "₹xx OFF" or smaller gray text
+          const discountText = document.body.innerText.match(/₹\d[\d.,]*\s*OFF/i);
+          const mrpFromDiscount = discountText ? discountText[0].split('OFF')[0].trim() : null;
+
+          const mrpEl = rupees.find(r => r.color.includes('rgb(88, 98, 116)') || r.text.includes('OFF'));
+          const mrp = mrpFromDiscount || (mrpEl ? mrpEl.text.match(/₹[\d,.,]+/)?.[0] : "N/A");
+
+          const discountEl = Array.from(document.querySelectorAll('span'))
+            .find(el => /₹\d.*OFF/i.test(el.innerText));
+          const discount = discountEl ? discountEl.innerText.trim() : "N/A";
+
+          const desc = document.querySelector('meta[name="description"]')?.content || "No description";
+
+          const images = Array.from(document.querySelectorAll('img'))
+            .map(img => img.src || img.dataset.src || '')
+            .filter(src => src && src.includes('product'))
+            .slice(0, 12)
+            .join('; ');
+
+          const info = {};
+          document.querySelectorAll('div, li, p').forEach(el => {
+            const txt = el.innerText.trim();
+            if (txt.includes(':') && txt.length < 180 && !txt.includes('₹') && txt.split(':').length === 2) {
+              const [k, v] = txt.split(':');
+              info[k.trim()] = v.trim();
+            }
+          });
+
+          return { title, sellingPrice, mrp, discount, desc, images, info, debug_rupees: rupees.map(r => r.text) };
+        });
+
+        console.log(`   Title: ${data.title.substring(0, 60)}...`);
+        console.log(`   Selling Price: ${data.sellingPrice}`);
+        console.log(`   MRP Detected: ${data.mrp}`);
+        console.log(`   Discount Text: ${data.discount}`);
+        console.log(`   All ₹ found: ${data.debug_rupees.join(' | ')}`);
+
+        if (data.title && !data.title.includes("This page isn’t working") && data.sellingPrice !== "N/A") {
+          const priceNum = parseFloat(data.sellingPrice.replace(/[^\d.]/g, ''));
+          const mrpNum = data.mrp !== "N/A" ? parseFloat(data.mrp.replace(/[^\d.]/g, '')) : priceNum;
+          const calculatedOffer = mrpNum > priceNum ? (((mrpNum - priceNum) / mrpNum) * 100).toFixed(1) + "%" : "N/A";
+
+          results.push({
+            name: data.title,
+            link: p.link,
+            image: data.images.split('; ')[0] || p.image,
+            price: data.sellingPrice,
+            mrp: data.mrp,
+            offer: data.discount !== "N/A" ? data.discount : calculatedOffer,
+            description: data.desc,
+            images: data.images,
+            ...data.info
+          });
+
+          Object.keys(data.info).forEach(k => extraKeys.add(k));
+          console.log(`SUCCESS → ${data.title} | ${data.sellingPrice} | MRP ${data.mrp} | ${data.discount || calculatedOffer}`);
+          success = true;
+          break;
+        } else {
+          console.warn(`   Bad data – retrying...`);
+        }
+      }
+      await delay(8000, 12000);
+    }
+
+    if (!success) {
+      console.log(`FAILED after 2 attempts → ${p.name}`);
+      results.push({
+        name: p.name + " (Blocked / Timeout)",
+        link: p.link,
+        price: "N/A", mrp: "N/A", offer: "N/A"
+      });
+    }
+
+    await tab.close();
+    await delay(4000, 8000); // Be respectful
+  }
+
+  // Excel export
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('Zepto Products');
+  const columns = [
+    { header: "Name", key: "name", width: 55 },
+    { header: "Link", key: "link", width: 85 },
+    { header: "Image", key: "image", width: 60 },
     { header: "Price", key: "price", width: 15 },
     { header: "MRP", key: "mrp", width: 15 },
-    { header: "Offer", key: "offer", width: 15 },
-    { header: "Description", key: "description", width: 60 },
-    { header: "Images", key: "images", width: 60 },
+    { header: "Offer", key: "offer", width: 18 },
+    { header: "Description", key: "description", width: 80 },
+    { header: "Images", key: "images", width: 100 },
   ];
+  Array.from(extraKeys).sort().forEach(k => columns.push({ header: k, key: k, width: 40 }));
+  ws.columns = columns;
+  results.forEach(r => ws.addRow(r));
 
-  const infoColumns = Array.from(allKeys).sort().map((key) => ({
-    header: key,
-    key: key,
-    width: 40,
-  }));
-
-  worksheet.columns = [...baseColumns, ...infoColumns];
-
-  products.forEach((product, index) => {
-    console.log(`Saving product ${index + 1}/${products.length}: ${product.name}`);
-    worksheet.addRow(product);
-  });
-
-  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-  await workbook.xlsx.writeFile(`zepto_vegetables_${timestamp}.xlsx`);
-  console.log(`Data saved to zepto_vegetables_${timestamp}.xlsx ✅`);
-
+  const filename = `ZEPTO_MASALA_DEBUG_${new Date().toISOString().slice(0,10)}.xlsx`;
+  await wb.xlsx.writeFile(filename);
+  console.log(`\nALL DONE! ${results.length} products saved → ${filename}\n`);
   await browser.close();
 }
 
-async function processProductPage(browser, product, index, products, allKeys) {
-  const page = await browser.newPage();
-  let attempts = 0;
-  const maxAttempts = 2;
-  let productDetails = null;
-
-  while (attempts < maxAttempts && !productDetails) {
-    try {
-      await retryGoto(page, product.link, 2);
-      await randomWait(2000, 4000);
-
-      await page.waitForSelector("body", { timeout: TIMEOUTS.navigation }).catch(() =>
-        console.warn(`Body selector not found for ${product.name} at ${product.link}`)
-      );
-
-      productDetails = await page.evaluate(() => {
-        const name =
-          document.querySelector("h1.font-semibold")?.textContent.trim() ||
-          document.querySelector("h1, h2, h3, [class*='title'], [data-testid='pdp-product-name']")?.textContent.trim() ||
-          document.querySelector('meta[itemprop="name"]')?.getAttribute("content")?.trim() ||
-          document.querySelector("title")?.textContent.trim() ||
-          "N/A";
-
-        const priceElement = Array.from(document.querySelectorAll("p, span, div, [class*='price']")).find(
-          (el) =>
-            el.textContent.match(/₹\d+(\.\d+)?/) &&
-            !el.textContent.includes("line-through") &&
-            !el.textContent.includes("MRP") &&
-            !el.textContent.includes("M.R.P")
-        );
-        const price = priceElement?.textContent.match(/₹\d+(\.\d+)?/)?.[0] || "N/A";
-
-        let mrpElement = document.querySelector("span.line-through, [class*='mrp'], [class*='original-price']");
-        let mrp = mrpElement ? mrpElement.textContent.replace("₹", "").trim() : null;
-        if (!mrp) {
-          const mrpAlt = Array.from(document.querySelectorAll("p, span, div")).find(
-            (el) => el.textContent.includes("MRP ₹") || el.textContent.includes("M.R.P")
-          );
-          mrp = mrpAlt ? mrpAlt.textContent.match(/₹\d+/)?.[0].replace("₹", "").trim() : "N/A";
-        } else {
-          mrp = mrp || "N/A";
-        }
-
-        const descriptionElement =
-          document.querySelector('meta[itemprop="description"]') ||
-          document.querySelector("p[class*='description'], div[class*='description']");
-        const description = descriptionElement
-          ? descriptionElement.getAttribute("content") || descriptionElement.textContent.trim() || "N/A"
-          : "N/A";
-
-        const images =
-          Array.from(
-            document.querySelectorAll('button[aria-label^="image-preview-"] img, img[class*="product-image"], img[src*="product"]')
-          )
-            .map((img) => img.src || img.getAttribute("data-src"))
-            .filter(Boolean)
-            .join("; ") || "N/A";
-
-        const info = {};
-        document
-          .querySelectorAll("div[class*='product-detail'], div[class*='info'], div[class*='detail'], div.flex, section[class*='info']")
-          .forEach((el) => {
-            const key = el.querySelector("h3, h4, strong, span[class*='key'], [class*='label']")?.textContent.trim() || null;
-            const value = el.querySelector("p, span[class*='value'], [class*='detail']")?.textContent.trim() || null;
-            if (key && value) info[key] = value;
-          });
-
-        if (Object.keys(info).length === 0) {
-          document.querySelectorAll("ul li, div[class*='info'] > *, [class*='detail'] > *").forEach((el) => {
-            const text = el.textContent.trim();
-            if (text.includes(":")) {
-              const [key, value] = text.split(":").map((s) => s.trim());
-              if (key && value) info[key] = value;
-            }
-          });
-        }
-
-        return { name, price, mrp, description, images, info };
-      });
-
-      if (productDetails.name === "N/A" && productDetails.price === "N/A") {
-        console.warn(`Incomplete data for ${product.name} at ${product.link}. Retrying...`);
-        productDetails = null;
-        attempts++;
-        await randomWait(2000, 4000);
-      }
-    } catch (error) {
-      console.error(`Error scraping product page for ${product.name} at ${product.link} (attempt ${attempts + 1}):`, error.message);
-      attempts++;
-      if (attempts < maxAttempts) {
-        console.log(`Retrying ${product.name} at ${product.link}...`);
-        await randomWait(2000, 4000);
-      }
-    }
-  }
-
-  if (!productDetails) {
-    console.error(`Failed to scrape ${product.name} at ${product.link} after ${maxAttempts} attempts.`);
-    const pageContent = await page.evaluate(() => document.body.innerHTML.substring(0, 1000)).catch(() => "N/A");
-    console.log(`Partial page content for ${product.link}: ${pageContent}`);
-    productDetails = {
-      name: "N/A",
-      price: "N/A",
-      mrp: "N/A",
-      description: "N/A",
-      images: "N/A",
-      info: {},
-    };
-  }
-
-  const priceNum = productDetails.price !== "N/A" ? parseFloat(productDetails.price.replace("₹", "")) : null;
-  const mrpNum = productDetails.mrp !== "N/A" ? parseFloat(productDetails.mrp) : null;
-  const offer =
-    priceNum && mrpNum && mrpNum > priceNum
-      ? (((mrpNum - priceNum) / mrpNum) * 100).toFixed(2) + "%"
-      : "N/A";
-
-  products[index] = {
-    name: productDetails.name,
-    link: product.link,
-    image: productDetails.images.split("; ")[0] || "N/A",
-    price: productDetails.price,
-    mrp: productDetails.mrp,
-    offer,
-    description: productDetails.description,
-    images: productDetails.images,
-    ...productDetails.info,
-  };
-
-  Object.keys(productDetails.info).forEach((k) => allKeys.add(k));
-  console.log(`Extracted details for ${products[index].name}:`, products[index]);
-
-  await page.close();
-}
-
-async function randomWait(min, max) {
-  const waitTime = Math.floor(Math.random() * (max - min + 1)) + min;
-  return new Promise((resolve) => setTimeout(resolve, waitTime));
-}
-
-async function retryGoto(page, url, retries = 3) {
-  for (let i = 0; i < retries; i++) {
-    try {
-      await page.goto(url, { waitUntil: "networkidle2" });
-      return;
-    } catch (error) {
-      console.error(`Attempt ${i + 1} failed for URL ${url}: ${error.message}`);
-      if (i === retries - 1) throw error;
-    }
-  }
-}
-
-scrapeProductData().catch((error) => {
-  console.error("Error in scrapeProductData:", error);
+scrape().catch(err => {
+  console.error("FATAL ERROR:", err);
 });

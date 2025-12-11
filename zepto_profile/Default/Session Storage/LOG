@@ -1,0 +1,24 @@
+2025/12/11-10:32:45.512 4260 Reusing MANIFEST D:\Vivimart\data_scrub\zepto_profile\Default\Session Storage/MANIFEST-000001
+2025/12/11-10:32:45.553 4260 Recovering log #6
+2025/12/11-10:32:45.558 4260 Reusing old log D:\Vivimart\data_scrub\zepto_profile\Default\Session Storage/000006.log 
+2025/12/11-10:33:59.550 4a74 Level-0 table #10: started
+2025/12/11-10:33:59.563 4a74 Level-0 table #10: 12710 bytes OK
+2025/12/11-10:33:59.567 4a74 Delete type=0 #6
+2025/12/11-10:47:31.569 4260 Level-0 table #12: started
+2025/12/11-10:47:31.587 4260 Level-0 table #12: 14166 bytes OK
+2025/12/11-10:47:31.594 4260 Delete type=0 #9
+2025/12/11-11:03:11.544 4a74 Level-0 table #14: started
+2025/12/11-11:03:11.557 4a74 Level-0 table #14: 14072 bytes OK
+2025/12/11-11:03:11.560 4a74 Delete type=0 #11
+2025/12/11-11:12:33.770 4260 Level-0 table #16: started
+2025/12/11-11:12:33.785 4260 Level-0 table #16: 14325 bytes OK
+2025/12/11-11:12:33.791 4260 Delete type=0 #13
+2025/12/11-11:12:33.792 4260 Compacting 4@0 + 1@1 files
+2025/12/11-11:12:33.802 4260 Generated table #17@0: 1323 keys, 26407 bytes
+2025/12/11-11:12:33.802 4260 Compacted 4@0 + 1@1 files => 26407 bytes
+2025/12/11-11:12:33.804 4260 compacted to: files[ 0 1 1 0 0 0 0 ]
+2025/12/11-11:12:33.805 4260 Delete type=2 #7
+2025/12/11-11:12:33.806 4260 Delete type=2 #10
+2025/12/11-11:12:33.806 4260 Delete type=2 #12
+2025/12/11-11:12:33.806 4260 Delete type=2 #14
+2025/12/11-11:12:33.806 4260 Delete type=2 #16
