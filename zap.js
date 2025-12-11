@@ -3,6 +3,7 @@ const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const ExcelJS = require('exceljs');
 puppeteer.use(StealthPlugin());
 
+// CHANGE THIS TO ANY ZEPTO CATEGORY URL
 const CATEGORY_URL = "https://www.zeptonow.com/cn/masala-dry-fruits-more/masala-dry-fruits-more/cid/0c2ccf87-e32c-4438-9560-8d9488fc73e0/scid/8b44cef2-1bab-407e-aadd-29254e6778fa";
 
 async function delay(min, max) {
@@ -12,139 +13,157 @@ async function delay(min, max) {
 }
 
 async function safeGoto(page, url, label = "") {
-  console.log(`Navigating to: ${url} ${label}`);
+  console.log(`Navigating → ${url} ${label}`);
   for (let i = 0; i < 3; i++) {
     try {
-      const response = await page.goto(url, { waitUntil: 'networkidle0', timeout: 50000 });
-      const status = response.status();
-      const finalUrl = page.url();
+      const resp = await page.goto(url, { waitUntil: 'networkidle0', timeout: 60000 });
+      const status = resp.status();
+      const currentUrl = page.url();
 
-      console.log(`→ Response: ${status} | Final URL: ${finalUrl.substring(0, 80)}${finalUrl.length > 80 ? '...' : ''}`);
+      console.log(`→ Status: ${status} | URL: ${currentUrl.substring(0, 90)}${currentUrl.length > 90 ? '...' : ''}`);
 
-      if (status === 503 || finalUrl.includes('captcha') || finalUrl.includes('blocked') || finalUrl.includes('cf-')) {
-        console.warn(`Blocked detected (status ${status}) – retrying...`);
-        throw new Error('Blocked');
+      if (status >= 400 || currentUrl.includes('captcha') || currentUrl.includes('blocked') || currentUrl.includes('cf-')) {
+        throw new Error('Blocked by Cloudflare');
       }
       return true;
     } catch (e) {
       console.warn(`Retry ${i + 1}/3 failed: ${e.message}`);
       if (i === 2) return false;
-      await delay(6000, 10000);
+      await delay(8000, 12000);
     }
   }
   return false;
 }
 
-async function scrape() {
-  console.log("\nZepto Scraper 2025 – ULTRA DEBUG MODE ACTIVATED\n");
+async function scrapeAllProducts() {
+  console.log("\nZEPTO FULL CATEGORY SCRAPER 2025 – GETS ALL 400–500+ PRODUCTS\n");
 
   const browser = await puppeteer.launch({
-    headless: false,
+    headless: false,                    // Must be visible for Zepto to trust you
     defaultViewport: null,
-    userDataDir: './zepto_profile',
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--start-maximized']
+    userDataDir: './zepto_profile',     // Saves your location forever
+    args: ['--start-maximized', '--no-sandbox', '--disable-setuid-sandbox']
   });
 
   const page = await browser.newPage();
 
-  // Anti-detection
+  // Bypass bot detection
   await page.evaluateOnNewDocument(() => {
     Object.defineProperty(navigator, 'webdriver', { get: () => false });
     window.chrome = { runtime: {}, app: {}, LoadTimes: () => {} };
-    Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3] });
+    Object.defineProperty(navigator, 'plugins', { get: () => [1,2,3,4,5] });
+    Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
   });
 
-  // Step 1: Open homepage
+  // 1. Open homepage
   if (!await safeGoto(page, 'https://www.zeptonow.com', "(Homepage)")) {
-    console.error("Cannot reach Zepto homepage → exiting");
+    console.error("Cannot reach Zepto – check internet or try again later");
     await browser.close();
     return;
   }
 
-  // Step 2: Check if location needed
-  const locationInput = await page.$('input[placeholder*="pincode" i], input[placeholder*="Pincode" i]');
-  if (locationInput) {
-    console.log("Location popup detected! Please select your area/pincode manually...");
-    console.log("After you see products → press ENTER in this terminal");
+  // 2. Handle location popup (only once)
+  const pincodeInput = await page.$('input[placeholder*="pincode" i]');
+  if (pincodeInput) {
+    console.log("\nLocation not set! Please manually:");
+    console.log("   → Enter your pincode");
+    console.log("   → Select your area");
+    console.log("   → Wait until products load");
+    console.log("   → Then press ENTER here in terminal\n");
     await new Promise(r => process.stdin.once('data', r));
   } else {
-    console.log("Location already saved from previous run");
+    console.log("Location already saved – proceeding...\n");
   }
 
-  // Step 3: Go to category
+  // 3. Go to category
   if (!await safeGoto(page, CATEGORY_URL, "(Category Page)")) {
     console.error("Failed to load category page");
     await browser.close();
     return;
   }
 
-  // Step 4: Scroll & load all products
-  console.log("Scrolling to load all products...");
-  for (let i = 0; i < 25; i++) {
-    await page.evaluate(() => window.scrollBy(0, 1200));
-    await delay(1000, 2000);
+  // 4. FORCE LOAD ALL PRODUCTS (448+)
+  console.log("FORCING ZEPTO TO LOAD ALL PRODUCTS – THIS TAKES 3–6 MINUTES...\n");
+
+  let lastCount = 0;
+  let stableRounds = 0;
+
+  for (let round = 1; round <= 80; round++) {
+    // Scroll to bottom
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    await delay(3000, 5000);
+
+    // Click any "Load More" / "Show More" button
+    const clicked = await page.evaluate(() => {
+      const buttons = Array.from(document.querySelectorAll('button, div[role="button"], span[role="button"]'));
+      const btn = buttons.find(el => {
+        const text = (el.textContent || '').toLowerCase();
+        return /load|show|view|more|products/i.test(text);
+      });
+      if (btn) {
+        btn.scrollIntoView({ block: 'center' });
+        btn.click();
+        return true;
+      }
+      return false;
+    });
+
+    // Count current products
+    const count = await page.evaluate(() => document.querySelectorAll('a[href^="/pn/"]').length);
+
+    console.log(`Round ${round.toString().padStart(2)} | ${count.toString().padStart(4)} products ${clicked ? '→ CLICKED Load More' : ''}`);
+
+    if (count === lastCount) {
+      stableRounds++;
+      if (stableRounds >= 12) {
+        console.log(`\nNo new products for 12 rounds → ALL ${count} PRODUCTS LOADED!\n`);
+        break;
+      }
+    } else {
+      stableRounds = 0;
+    }
+    lastCount = count;
+    await delay(2000, 4000);
   }
 
-  // Step 5: Extract only real product cards
+  // 5. Extract ALL product links
   const products = await page.evaluate(() => {
-    const links = Array.from(document.querySelectorAll('a[href^="/pn/"]'));
-    return links
+    return Array.from(document.querySelectorAll('a[href^="/pn/"]'))
       .filter(a => {
         const href = a.getAttribute('href') || '';
-        const text = (a.textContent || '').toLowerCase();
-        return href.includes('/pvid/') &&
-               a.querySelector('img') &&
-               !text.includes('load more') &&
-               !text.includes('show more') &&
-               !text.includes('view all');
+        return href.includes('/pvid/') && a.querySelector('img');
       })
       .map(a => {
         const img = a.querySelector('img');
         return {
-          name: img?.alt?.trim() || "No Alt Text",
+          name: img?.alt?.trim() || "Unknown Product",
           link: "https://www.zeptonow.com" + a.getAttribute('href'),
-          image: img?.src || img?.dataset?.src || "No Image"
+          image: img?.src || img?.dataset?.src || "N/A"
         };
       });
   });
 
-  console.log(`Found ${products.length} valid product cards on listing page\n`);
+  console.log(`\nEXTRACTED ${products.length} PRODUCTS – STARTING DETAILED SCRAPING...\n`);
 
   const results = [];
   const extraKeys = new Set();
 
-  // Step 6: Scrape each product one by one
+  // 6. Scrape each product page
   for (let i = 0; i < products.length; i++) {
     const p = products[i];
-    console.log(`\n[${i + 1}/${products.length}] Processing → ${p.name.substring(0, 60)}...`);
+    console.log(`\n[${(i+1).toString().padStart(3)}/${products.length}] ${p.name.substring(0, 65)}...`);
 
     const tab = await browser.newPage();
-
     let success = false;
+
     for (let attempt = 1; attempt <= 2; attempt++) {
-      console.log(`   Attempt ${attempt}/2 → Opening product page...`);
-
-      if (await safeGoto(tab, p.link, `(Product ${i + 1})`)) {
-
-        // Wait until price appears or h1 loads
-        const priceLoaded = await tab.waitForFunction(() => {
-          return document.body.innerText.includes('₹') || document.querySelector('h1');
-        }, { timeout: 18000 }).catch(() => false);
-
-        if (!priceLoaded) {
-          console.warn(`   Price or title not loaded in 18s – retrying...`);
-          await tab.close();
-          await delay(8000, 12000);
-          continue;
-        }
-
-        await delay(4000, 7000); // Let React finish
+      if (await safeGoto(tab, p.link)) {
+        await tab.waitForFunction(() => document.body.innerText.includes('₹') || document.querySelector('h1'), { timeout: 20000 }).catch(() => {});
+        await delay(4000, 7000);
 
         const data = await tab.evaluate(() => {
-          // Title
           const title = document.querySelector('h1')?.innerText.trim() || "No Title";
 
-          // All ₹ elements
           const rupees = Array.from(document.querySelectorAll('span, p, div'))
             .filter(el => /₹\d/.test(el.innerText))
             .map(el => ({
@@ -153,113 +172,106 @@ async function scrape() {
               color: getComputedStyle(el).color
             }));
 
-          // Selling price = largest font size + green/not gray
-          const sellingPriceEl = rupees
+          const sellingPrice = rupees
             .filter(r => !r.text.includes('OFF'))
             .sort((a, b) => b.size - a.size)[0];
-          const sellingPrice = sellingPriceEl ? sellingPriceEl.text.match(/₹[\d,.,]+/)?.[0] || "N/A" : "N/A";
+          const price = sellingPrice ? sellingPrice.text.match(/₹[\d.,]+/)?.[0] || "N/A" : "N/A";
 
-          // MRP = either "₹xx OFF" or smaller gray text
-          const discountText = document.body.innerText.match(/₹\d[\d.,]*\s*OFF/i);
-          const mrpFromDiscount = discountText ? discountText[0].split('OFF')[0].trim() : null;
+          const discountMatch = document.body.innerText.match(/₹\d[\d.,]*\s*OFF/i);
+          const mrpFromDiscount = discountMatch ? discountMatch[0].split('OFF')[0].trim() : null;
+          const mrp = mrpFromDiscount || rupees.find(r => r.color === 'rgb(88, 98, 116)')?.text.match(/₹[\d.,]+/)?.[0] || "N/A";
 
-          const mrpEl = rupees.find(r => r.color.includes('rgb(88, 98, 116)') || r.text.includes('OFF'));
-          const mrp = mrpFromDiscount || (mrpEl ? mrpEl.text.match(/₹[\d,.,]+/)?.[0] : "N/A");
+          const discount = Array.from(document.querySelectorAll('span'))
+            .find(el => /₹.*OFF/i.test(el.innerText))?.innerText.trim() || "N/A";
 
-          const discountEl = Array.from(document.querySelectorAll('span'))
-            .find(el => /₹\d.*OFF/i.test(el.innerText));
-          const discount = discountEl ? discountEl.innerText.trim() : "N/A";
-
-          const desc = document.querySelector('meta[name="description"]')?.content || "No description";
+          const desc = document.querySelector('meta[name="description"]')?.content || "N/A";
 
           const images = Array.from(document.querySelectorAll('img'))
-            .map(img => img.src || img.dataset.src || '')
+            .map(img => img.src || img.dataset.src)
             .filter(src => src && src.includes('product'))
             .slice(0, 12)
             .join('; ');
 
           const info = {};
           document.querySelectorAll('div, li, p').forEach(el => {
-            const txt = el.innerText.trim();
-            if (txt.includes(':') && txt.length < 180 && !txt.includes('₹') && txt.split(':').length === 2) {
-              const [k, v] = txt.split(':');
+            const text = el.innerText.trim();
+            if (text.includes(':') && text.length < 200 && !text.includes('₹') && text.split(':').length === 2) {
+              const [k, v] = text.split(':');
               info[k.trim()] = v.trim();
             }
           });
 
-          return { title, sellingPrice, mrp, discount, desc, images, info, debug_rupees: rupees.map(r => r.text) };
+          return { title, price, mrp, discount, desc, images, info };
         });
 
         console.log(`   Title: ${data.title.substring(0, 60)}...`);
-        console.log(`   Selling Price: ${data.sellingPrice}`);
-        console.log(`   MRP Detected: ${data.mrp}`);
-        console.log(`   Discount Text: ${data.discount}`);
-        console.log(`   All ₹ found: ${data.debug_rupees.join(' | ')}`);
+        console.log(`   Price: ${data.price} | MRP: ${data.mrp} | Offer: ${data.discount}`);
 
-        if (data.title && !data.title.includes("This page isn’t working") && data.sellingPrice !== "N/A") {
-          const priceNum = parseFloat(data.sellingPrice.replace(/[^\d.]/g, ''));
+        if (data.title && data.price !== "N/A" && !data.title.includes("page isn’t working")) {
+          const priceNum = parseFloat(data.price.replace(/[^\d.]/g, ''));
           const mrpNum = data.mrp !== "N/A" ? parseFloat(data.mrp.replace(/[^\d.]/g, '')) : priceNum;
-          const calculatedOffer = mrpNum > priceNum ? (((mrpNum - priceNum) / mrpNum) * 100).toFixed(1) + "%" : "N/A";
+          const offer = mrpNum > priceNum ? (((mrpNum - priceNum) / mrpNum) * 100).toFixed(1) + "%" : data.discount;
 
           results.push({
             name: data.title,
             link: p.link,
             image: data.images.split('; ')[0] || p.image,
-            price: data.sellingPrice,
+            price: data.price,
             mrp: data.mrp,
-            offer: data.discount !== "N/A" ? data.discount : calculatedOffer,
+            offer: offer,
             description: data.desc,
             images: data.images,
             ...data.info
           });
 
           Object.keys(data.info).forEach(k => extraKeys.add(k));
-          console.log(`SUCCESS → ${data.title} | ${data.sellingPrice} | MRP ${data.mrp} | ${data.discount || calculatedOffer}`);
+          console.log(`SUCCESS – ${data.title.substring(0, 50)}...`);
           success = true;
           break;
-        } else {
-          console.warn(`   Bad data – retrying...`);
         }
       }
       await delay(8000, 12000);
     }
 
     if (!success) {
-      console.log(`FAILED after 2 attempts → ${p.name}`);
-      results.push({
-        name: p.name + " (Blocked / Timeout)",
-        link: p.link,
-        price: "N/A", mrp: "N/A", offer: "N/A"
-      });
+      console.log(`FAILED – ${p.name}`);
+      results.push({ name: p.name + " (Blocked)", link: p.link, price: "N/A", mrp: "N/A", offer: "N/A" });
     }
 
     await tab.close();
-    await delay(4000, 8000); // Be respectful
+    await delay(3000, 7000);
   }
 
-  // Excel export
+  // 7. Save to Excel
   const wb = new ExcelJS.Workbook();
-  const ws = wb.addWorksheet('Zepto Products');
+  const ws = wb.addWorksheet('Zepto Full Category');
+
   const columns = [
-    { header: "Name", key: "name", width: 55 },
-    { header: "Link", key: "link", width: 85 },
+    { header: "Name", key: "name", width: 60 },
+    { header: "Link", key: "link", width: 90 },
     { header: "Image", key: "image", width: 60 },
     { header: "Price", key: "price", width: 15 },
     { header: "MRP", key: "mrp", width: 15 },
     { header: "Offer", key: "offer", width: 18 },
     { header: "Description", key: "description", width: 80 },
-    { header: "Images", key: "images", width: 100 },
+    { header: "All Images", key: "images", width: 100 },
   ];
-  Array.from(extraKeys).sort().forEach(k => columns.push({ header: k, key: k, width: 40 }));
-  ws.columns = columns;
-  results.forEach(r => ws.addRow(r));
 
-  const filename = `ZEPTO_MASALA_DEBUG_${new Date().toISOString().slice(0,10)}.xlsx`;
+  Array.from(extraKeys).sort().forEach(key => {
+    columns.push({ header: key, key: key, width: 40 });
+  });
+
+  ws.columns = columns;
+  results.forEach(product => ws.addRow(product));
+
+  const filename = `ZEPTO_FULL_${new Date().toISOString().slice(0,10)}_(${results.length}_products).xlsx`;
   await wb.xlsx.writeFile(filename);
-  console.log(`\nALL DONE! ${results.length} products saved → ${filename}\n`);
+
+  console.log(`\nMISSION COMPLETE!`);
+  console.log(`${results.length} products saved to → ${filename}`);
   await browser.close();
 }
 
-scrape().catch(err => {
-  console.error("FATAL ERROR:", err);
+scrapeAllProducts().catch(err => {
+  console.error("CRASHED:", err);
 });
